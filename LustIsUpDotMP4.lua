@@ -30,18 +30,21 @@ local MEDIA_PACKS = {
         tga    = "Interface\\AddOns\\LustIsUpDotMP4\\media\\nflonfox\\nflonfox.tga",
         audio  = "Interface\\AddOns\\LustIsUpDotMP4\\media\\nflonfox\\nflonfox.mp3",
         w = 192, h = 192, texW = 1024, texH = 2048, cols = 4, frames = 32, fps = 12,
+        audioDuration = 39,
     },
     {
         name   = "oopsiekitty",
         tga    = "Interface\\AddOns\\LustIsUpDotMP4\\media\\oopsiekitty\\OopsieKitty.tga",
         audio  = "Interface\\AddOns\\LustIsUpDotMP4\\media\\oopsiekitty\\OopsieKitty.wav",
         w = 256, h = 256, texW = 4096, texH = 4096, cols = 16, frames = 256, fps = 24,
+        audioDuration = 39,
     },
     {
         name   = "pedro",
         tga    = "Interface\\AddOns\\LustIsUpDotMP4\\media\\pedro\\pedro.tga",
         audio  = "Interface\\AddOns\\LustIsUpDotMP4\\media\\pedro\\pedrolust.mp3",
         w = 192, h = 192, texW = 1024, texH = 2048, cols = 4, frames = 32, fps = 8,
+        audioDuration = 39,
     },
 }
 
@@ -231,28 +234,36 @@ local function StopAudio()
     end
 end
 
-local AUDIO_REPLAY_SECONDS = 10
-
 local function StartAudioLoop()
     StopAudio()
     if db.mode == "visual" then return end
     local pack = GetPack(db.pack)
+    local duration = pack.audioDuration or 40
+    local startTime = GetTime()
+
     local willPlay, handle = PlaySoundFile(pack.audio, db.channel)
     if willPlay then
         soundHandle = handle
     end
-    audioTicker = C_Timer.NewTicker(AUDIO_REPLAY_SECONDS, function()
+
+    -- Poll every second; replay when the track's duration has elapsed
+    audioTicker = C_Timer.NewTicker(1, function()
         if not lustActive then
             StopAudio()
             return
         end
-        if soundHandle then
-            StopSound(soundHandle)
-            soundHandle = nil
-        end
-        local wp, h = PlaySoundFile(pack.audio, db.channel)
-        if wp then
-            soundHandle = h
+        local elapsed = GetTime() - startTime
+        if elapsed >= duration then
+            -- Previous playback should be done; start fresh
+            if soundHandle then
+                StopSound(soundHandle)
+                soundHandle = nil
+            end
+            local wp, h = PlaySoundFile(pack.audio, db.channel)
+            if wp then
+                soundHandle = h
+            end
+            startTime = GetTime()
         end
     end)
 end
