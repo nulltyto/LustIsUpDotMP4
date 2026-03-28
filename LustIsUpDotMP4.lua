@@ -3,15 +3,16 @@ local addonName = ...
 ------------------------------------------------------------
 -- Constants
 ------------------------------------------------------------
-local LUST_SPELLS = {
-    [2825]   = true, -- Bloodlust
-    [32182]  = true, -- Heroism
-    [80353]  = true, -- Time Warp
-    [264667] = true, -- Primal Rage
-    [272678] = true, -- Primal Rage (variant)
-    [390386] = true, -- Fury of the Aspects
-    [90355]  = true, -- Ancient Hysteria
-    [381301] = true, -- Feral Hide Drums
+local LUST_DURATION = 40
+
+local LUST_DEBUFFS = {
+    [57723]  = true, -- Exhaustion (Bloodlust / Heroism)
+    [390435] = true, -- Exhaustion (Fury of the Aspects)
+    [57724]  = true, -- Sated
+    [80354]  = true, -- Temporal Displacement (Time Warp)
+    [95809]  = true, -- Insanity (Ancient Hysteria)
+    [160455] = true, -- Fatigued (Drums)
+    [264689] = true, -- Fatigued (variant)
 }
 
 local AUDIO_CHANNELS = { "Master", "SFX", "Music", "Ambience" }
@@ -67,6 +68,8 @@ local db
 local lustActive    = false
 local soundHandle   = nil
 local audioTicker   = nil
+local lustTimer     = nil
+local hadDebuff     = false
 local unlocked      = false
 
 -- Animation state
@@ -269,6 +272,24 @@ local function StartAudioLoop()
 end
 
 ------------------------------------------------------------
+-- Debuff scanning
+------------------------------------------------------------
+local function FindLustDebuff()
+    for spellID in pairs(LUST_DEBUFFS) do
+        local aura = C_UnitAuras.GetPlayerAuraBySpellID(spellID)
+        if aura then return aura end
+    end
+    return nil
+end
+
+local function CancelLustTimer()
+    if lustTimer then
+        lustTimer:Cancel()
+        lustTimer = nil
+    end
+end
+
+------------------------------------------------------------
 -- Lust activation / deactivation
 ------------------------------------------------------------
 local function ActivateLust()
@@ -287,28 +308,48 @@ end
 local function DeactivateLust()
     if not lustActive then return end
     lustActive = false
+    CancelLustTimer()
     indicator:Hide()
     StopAnimation()
     StopAudio()
 end
 
-------------------------------------------------------------
--- Buff scanning
-------------------------------------------------------------
-local function HasLustBuff()
-    for spellID in pairs(LUST_SPELLS) do
-        local aura = C_UnitAuras.GetPlayerAuraBySpellID(spellID)
-        if aura then return true end
-    end
-    return false
-end
-
 local function CheckLust()
-    if HasLustBuff() then
-        ActivateLust()
-    else
-        DeactivateLust()
+    local aura = FindLustDebuff()
+    local hasDebuff = aura ~= nil
+
+    -- Debuff found with valid timing info: calculate remaining lust window
+    if aura and aura.duration and aura.duration > 0
+       and aura.expirationTime and aura.expirationTime > 0 then
+        local startedAt = aura.expirationTime - aura.duration
+        local remaining = (startedAt + LUST_DURATION) - GetTime()
+
+        hadDebuff = true
+
+        if remaining > 0 then
+            ActivateLust()
+            CancelLustTimer()
+            lustTimer = C_Timer.NewTimer(remaining, function()
+                lustTimer = nil
+                DeactivateLust()
+            end)
+        else
+            DeactivateLust()
+        end
+        return
     end
+
+    -- New debuff without timing (edge case): assume full duration
+    if hasDebuff and not hadDebuff then
+        ActivateLust()
+        CancelLustTimer()
+        lustTimer = C_Timer.NewTimer(LUST_DURATION, function()
+            lustTimer = nil
+            DeactivateLust()
+        end)
+    end
+
+    hadDebuff = hasDebuff
 end
 
 ------------------------------------------------------------
@@ -681,6 +722,7 @@ end
 local eventFrame = CreateFrame("Frame")
 eventFrame:RegisterEvent("ADDON_LOADED")
 eventFrame:RegisterEvent("UNIT_AURA")
+eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
 
 eventFrame:SetScript("OnEvent", function(self, event, ...)
     if event == "ADDON_LOADED" then
@@ -719,6 +761,11 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
         if unit == "player" then
             CheckLust()
         end
+
+    elseif event == "PLAYER_ENTERING_WORLD" then
+        hadDebuff = false
+        DeactivateLust()
+        C_Timer.After(1, CheckLust)
     end
 end)
 
