@@ -387,7 +387,18 @@ local closeTex = closeBtn:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall"
 closeTex:SetPoint("CENTER")
 closeTex:SetText("X")
 closeTex:SetTextColor(0.7, 0.7, 0.7, 1)
-closeBtn:SetScript("OnClick", function() panel:Hide() end)
+closeBtn:SetScript("OnClick", function()
+    if unlocked then
+        unlocked = false
+        anchor:EnableMouse(false)
+        anchor:SetSize(1, 1)
+        if not lustActive then
+            indicator:Hide()
+            StopAnimation()
+        end
+    end
+    panel:Hide()
+end)
 closeBtn:SetScript("OnEnter", function() closeTex:SetTextColor(1, 0.3, 0.3, 1) end)
 closeBtn:SetScript("OnLeave", function() closeTex:SetTextColor(0.7, 0.7, 0.7, 1) end)
 
