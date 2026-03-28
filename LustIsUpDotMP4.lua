@@ -372,6 +372,7 @@ panel:RegisterForDrag("LeftButton")
 panel:SetScript("OnDragStart", panel.StartMoving)
 panel:SetScript("OnDragStop", panel.StopMovingOrSizing)
 panel:Hide()
+tinsert(UISpecialFrames, "LustIsUpPanel")
 
 -- Title
 local title = panel:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
@@ -387,7 +388,8 @@ local closeTex = closeBtn:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall"
 closeTex:SetPoint("CENTER")
 closeTex:SetText("X")
 closeTex:SetTextColor(0.7, 0.7, 0.7, 1)
-closeBtn:SetScript("OnClick", function()
+closeBtn:SetScript("OnClick", function() panel:Hide() end)
+panel:SetScript("OnHide", function()
     if unlocked then
         unlocked = false
         anchor:EnableMouse(false)
@@ -397,7 +399,6 @@ closeBtn:SetScript("OnClick", function()
             StopAnimation()
         end
     end
-    panel:Hide()
 end)
 closeBtn:SetScript("OnEnter", function() closeTex:SetTextColor(1, 0.3, 0.3, 1) end)
 closeBtn:SetScript("OnLeave", function() closeTex:SetTextColor(0.7, 0.7, 0.7, 1) end)
@@ -717,10 +718,6 @@ end
 
 local function TogglePanel()
     if panel:IsShown() then
-        if unlocked then
-            unlocked = false
-            UpdateUnlockState()
-        end
         panel:Hide()
     else
         OpenPanel()
