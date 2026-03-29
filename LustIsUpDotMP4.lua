@@ -76,6 +76,7 @@ local unlocked      = false
 local animFrame     = 0
 local animElapsed   = 0
 local animPlaying   = false
+local activePack    = nil  -- resolved pack for current lust (supports "random")
 
 ------------------------------------------------------------
 -- Helpers
@@ -85,6 +86,14 @@ local function GetPack(name)
         if p.name == name then return p end
     end
     return MEDIA_PACKS[1]
+end
+
+local function PickRandomPack()
+    return MEDIA_PACKS[math.random(#MEDIA_PACKS)]
+end
+
+local function GetActivePack()
+    return activePack or GetPack(db.pack)
 end
 
 local function DefaultPosition()
@@ -149,14 +158,14 @@ local function SetAnimFrame(frame, pack)
 end
 
 local function StartAnimation()
-    local pack = GetPack(db.pack)
+    local pack = GetActivePack()
     animFrame = 0
     animElapsed = 0
     animPlaying = true
     SetAnimFrame(0, pack)
     indicator:SetScript("OnUpdate", function(_, elapsed)
         if not animPlaying then return end
-        local p = GetPack(db.pack)
+        local p = GetActivePack()
         local fps = p.fps or 15
         if fps <= 0 then fps = 1 end
         animElapsed = animElapsed + elapsed
@@ -204,7 +213,7 @@ end
 
 local function ApplyFrameSize()
     -- Indicator matches the cell's aspect ratio
-    local pack = GetPack(db.pack)
+    local pack = GetActivePack()
     if pack.w >= pack.h then
         indicator:SetSize(INDICATOR_BASE, INDICATOR_BASE * (pack.h / pack.w))
     else
@@ -217,7 +226,7 @@ local function ApplyScale()
 end
 
 local function ApplyTexture()
-    local pack = GetPack(db.pack)
+    local pack = GetActivePack()
     indicatorTex:SetTexture(pack.tga)
     ApplyFrameSize()
     SetAnimFrame(0, pack)
@@ -240,7 +249,7 @@ end
 local function StartAudioLoop()
     StopAudio()
     if db.mode == "visual" then return end
-    local pack = GetPack(db.pack)
+    local pack = GetActivePack()
     local duration = pack.audioDuration or 40
     local startTime = GetTime()
 
@@ -295,6 +304,11 @@ end
 local function ActivateLust()
     if lustActive then return end
     lustActive = true
+    if db.pack == "random" then
+        activePack = PickRandomPack()
+    else
+        activePack = GetPack(db.pack)
+    end
     if db.mode ~= "audio" then
         ApplyTexture()
         ApplyScale()
@@ -308,6 +322,7 @@ end
 local function DeactivateLust()
     if not lustActive then return end
     lustActive = false
+    activePack = nil
     CancelLustTimer()
     indicator:Hide()
     StopAnimation()
@@ -356,7 +371,7 @@ end
 -- Settings Panel
 ------------------------------------------------------------
 local panel = CreateFrame("Frame", "LustIsUpPanel", UIParent, "BackdropTemplate")
-panel:SetSize(340, 420)
+panel:SetSize(356, 1) -- height set after layout is built
 panel:SetPoint("CENTER")
 panel:SetFrameStrata("DIALOG")
 panel:SetBackdrop({
@@ -395,6 +410,7 @@ panel:SetScript("OnHide", function()
         anchor:EnableMouse(false)
         anchor:SetSize(1, 1)
         if not lustActive then
+            activePack = nil
             indicator:Hide()
             StopAnimation()
         end
@@ -407,7 +423,7 @@ closeBtn:SetScript("OnLeave", function() closeTex:SetTextColor(0.7, 0.7, 0.7, 1)
 local function CreateDivider(yOff)
     local div = panel:CreateTexture(nil, "ARTWORK")
     div:SetColorTexture(0.3, 0.3, 0.35, 1)
-    div:SetSize(308, 1)
+    div:SetSize(324, 1)
     div:SetPoint("TOPLEFT", 16, yOff)
 end
 
@@ -422,7 +438,7 @@ local function CreatePanelSlider(parent, yOff, label, minVal, maxVal, step, form
     val:SetTextColor(0.9, 0.9, 0.9, 1)
 
     local s = CreateFrame("Slider", nil, parent, "BackdropTemplate")
-    s:SetSize(308, 14)
+    s:SetSize(324, 14)
     s:SetPoint("TOPLEFT", 16, yOff - 18)
     s:SetOrientation("HORIZONTAL")
     s:SetMinMaxValues(minVal, maxVal)
@@ -463,7 +479,29 @@ packLabel:SetTextColor(0.7, 0.7, 0.7, 1)
 local packButtons = {}
 local TILE_SIZE = 72
 local TILE_PAD  = 8
-local TILES_PER_ROW = 3
+local TILE_LABEL_H = 16
+local TILE_ROW_H = TILE_SIZE + TILE_LABEL_H + TILE_PAD
+local TILES_PER_ROW = 4
+local SCROLL_VISIBLE_ROWS = 2
+local SCROLL_HEIGHT = SCROLL_VISIBLE_ROWS * TILE_ROW_H
+
+-- Scrollable container for pack tiles
+local packScroll = CreateFrame("ScrollFrame", nil, panel)
+packScroll:SetSize(324, SCROLL_HEIGHT)
+packScroll:SetPoint("TOPLEFT", 16, -64)
+
+local packChild = CreateFrame("Frame", nil, packScroll)
+packChild:SetSize(324, SCROLL_HEIGHT)
+packScroll:SetScrollChild(packChild)
+
+packScroll:EnableMouseWheel(true)
+packScroll:SetScript("OnMouseWheel", function(self, delta)
+    local cur = self:GetVerticalScroll()
+    local maxScroll = self:GetVerticalScrollRange()
+    local step = TILE_ROW_H
+    local newScroll = math.max(0, math.min(cur - delta * step, maxScroll))
+    self:SetVerticalScroll(newScroll)
+end)
 
 local function UpdatePackSelection()
     for _, btn in ipairs(packButtons) do
@@ -475,16 +513,16 @@ local function UpdatePackSelection()
     end
 end
 
-for i, pack in ipairs(MEDIA_PACKS) do
+local function CreatePackTile(i, packName, setupVisual, onClickFn)
     local col = (i - 1) % TILES_PER_ROW
     local row = math.floor((i - 1) / TILES_PER_ROW)
-    local xOff = 16 + col * (TILE_SIZE + TILE_PAD)
-    local yOff = -64 - row * (TILE_SIZE + TILE_PAD)
+    local xOff = 2 + col * (TILE_SIZE + TILE_PAD)
+    local yOff = -(2 + row * TILE_ROW_H)
 
-    local btn = CreateFrame("Button", nil, panel)
+    local btn = CreateFrame("Button", nil, packChild)
     btn:SetSize(TILE_SIZE, TILE_SIZE)
     btn:SetPoint("TOPLEFT", xOff, yOff)
-    btn.packName = pack.name
+    btn.packName = packName
 
     local border = btn:CreateTexture(nil, "BACKGROUND")
     border:SetPoint("TOPLEFT", -2, 2)
@@ -492,27 +530,14 @@ for i, pack in ipairs(MEDIA_PACKS) do
     border:SetColorTexture(0.3, 0.3, 0.35, 1)
     btn.border = border
 
-    -- Thumbnail: show first cell using pixel-based UV
-    local thumb = btn:CreateTexture(nil, "ARTWORK")
-    thumb:SetAllPoints()
-    thumb:SetTexture(pack.tga)
-    thumb:SetTexCoord(0, pack.w / pack.texW, 0, pack.h / pack.texH)
+    setupVisual(btn)
 
     local label = btn:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    label:SetPoint("BOTTOM", 0, -14)
-    label:SetText(pack.name)
+    label:SetPoint("TOP", btn, "BOTTOM", 0, -2)
+    label:SetText(packName)
     label:SetTextColor(0.6, 0.6, 0.6, 1)
 
-    btn:SetScript("OnClick", function()
-        db.pack = pack.name
-        UpdatePackSelection()
-        if unlocked or lustActive then
-            ApplyTexture()
-            if animPlaying then
-                StartAnimation()
-            end
-        end
-    end)
+    btn:SetScript("OnClick", onClickFn)
 
     btn:SetScript("OnEnter", function()
         if btn.packName ~= db.pack then
@@ -527,10 +552,58 @@ for i, pack in ipairs(MEDIA_PACKS) do
     end)
 
     packButtons[#packButtons + 1] = btn
+    return btn
 end
 
-local packGridRows = math.ceil(#MEDIA_PACKS / TILES_PER_ROW)
-local packGridBottom = -64 - packGridRows * (TILE_SIZE + TILE_PAD) - 10
+for i, pack in ipairs(MEDIA_PACKS) do
+    CreatePackTile(i, pack.name, function(btn)
+        local thumb = btn:CreateTexture(nil, "ARTWORK")
+        thumb:SetAllPoints()
+        thumb:SetTexture(pack.tga)
+        thumb:SetTexCoord(0, pack.w / pack.texW, 0, pack.h / pack.texH)
+    end, function()
+        db.pack = pack.name
+        UpdatePackSelection()
+        if unlocked or lustActive then
+            ApplyTexture()
+            if animPlaying then
+                StartAnimation()
+            end
+        end
+    end)
+end
+
+-- "Random" tile
+CreatePackTile(#MEDIA_PACKS + 1, "random", function(btn)
+    local bg = btn:CreateTexture(nil, "ARTWORK")
+    bg:SetAllPoints()
+    bg:SetColorTexture(0.18, 0.18, 0.2, 1)
+
+    local question = btn:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+    question:SetPoint("CENTER", 0, 2)
+    question:SetText("?")
+    question:SetTextColor(0.7, 0.7, 0.7, 1)
+end, function()
+    db.pack = "random"
+    UpdatePackSelection()
+    if unlocked then
+        activePack = PickRandomPack()
+        ApplyTexture()
+        if animPlaying then
+            StartAnimation()
+        end
+    end
+end)
+
+-- Size scroll area to fit content (up to SCROLL_VISIBLE_ROWS)
+local totalTiles = #MEDIA_PACKS + 1  -- +1 for random
+local totalRows = math.ceil(totalTiles / TILES_PER_ROW)
+local visibleRows = math.min(totalRows, SCROLL_VISIBLE_ROWS)
+local scrollH = visibleRows * TILE_ROW_H + 4  -- +4 for border inset
+packScroll:SetHeight(scrollH)
+packChild:SetHeight(totalRows * TILE_ROW_H + 4)
+
+local packGridBottom = -64 - scrollH - 10
 
 ------------------------------------------------------------
 -- Mode Toggle
@@ -558,10 +631,13 @@ local function UpdateModeSelection()
     end
 end
 
+local MODE_BTN_GAP = 4
+local MODE_BTN_W = math.floor((324 - (#MODES - 1) * MODE_BTN_GAP) / #MODES)
+
 for i, mode in ipairs(MODES) do
     local btn = CreateFrame("Button", nil, panel, "BackdropTemplate")
-    btn:SetSize(92, 26)
-    btn:SetPoint("TOPLEFT", 16 + (i - 1) * 100, packGridBottom - 24)
+    btn:SetSize(MODE_BTN_W, 26)
+    btn:SetPoint("TOPLEFT", 16 + (i - 1) * (MODE_BTN_W + MODE_BTN_GAP), packGridBottom - 24)
     btn:SetBackdrop({
         bgFile   = "Interface\\Buttons\\WHITE8x8",
         edgeFile = "Interface\\Buttons\\WHITE8x8",
@@ -609,10 +685,13 @@ local function UpdateChannelSelection()
     end
 end
 
+local CH_BTN_GAP = 4
+local CH_BTN_W = math.floor((324 - (#AUDIO_CHANNELS - 1) * CH_BTN_GAP) / #AUDIO_CHANNELS)
+
 for i, ch in ipairs(AUDIO_CHANNELS) do
     local btn = CreateFrame("Button", nil, panel, "BackdropTemplate")
-    btn:SetSize(68, 26)
-    btn:SetPoint("TOPLEFT", 16 + (i - 1) * 76, modeBottom - 24)
+    btn:SetSize(CH_BTN_W, 26)
+    btn:SetPoint("TOPLEFT", 16 + (i - 1) * (CH_BTN_W + CH_BTN_GAP), modeBottom - 24)
     btn:SetBackdrop({
         bgFile   = "Interface\\Buttons\\WHITE8x8",
         edgeFile = "Interface\\Buttons\\WHITE8x8",
@@ -659,7 +738,7 @@ local scaleBottom = channelBottom - 42
 CreateDivider(scaleBottom)
 
 local unlockBtn = CreateFrame("Button", nil, panel, "BackdropTemplate")
-unlockBtn:SetSize(308, 28)
+unlockBtn:SetSize(324, 28)
 unlockBtn:SetPoint("TOPLEFT", 16, scaleBottom - 10)
 unlockBtn:SetBackdrop({
     bgFile   = "Interface\\Buttons\\WHITE8x8",
@@ -676,6 +755,11 @@ local function UpdateUnlockState()
         unlockBtn:SetBackdropColor(0.8, 0.5, 0.2, 1)
         unlockLabel:SetText("Lock Position")
         unlockLabel:SetTextColor(1, 1, 1, 1)
+        if db.pack == "random" then
+            activePack = PickRandomPack()
+        else
+            activePack = GetPack(db.pack)
+        end
         ApplyTexture()
         ApplyScale()
         ApplyPosition()
@@ -691,6 +775,7 @@ local function UpdateUnlockState()
         anchor:EnableMouse(false)
         anchor:SetSize(1, 1)
         if not lustActive then
+            activePack = nil
             indicator:Hide()
             StopAnimation()
         end
@@ -701,6 +786,9 @@ unlockBtn:SetScript("OnClick", function()
     unlocked = not unlocked
     UpdateUnlockState()
 end)
+
+-- Set panel height to fit all controls
+panel:SetHeight(-(scaleBottom - 10) + 28 + 16)
 
 ------------------------------------------------------------
 -- Panel open/close logic
@@ -749,9 +837,11 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
                 db.x, db.y = DefaultPosition()
             end
 
-            local found = false
-            for _, p in ipairs(MEDIA_PACKS) do
-                if p.name == db.pack then found = true; break end
+            local found = (db.pack == "random")
+            if not found then
+                for _, p in ipairs(MEDIA_PACKS) do
+                    if p.name == db.pack then found = true; break end
+                end
             end
             if not found then
                 db.pack = MEDIA_PACKS[1].name
