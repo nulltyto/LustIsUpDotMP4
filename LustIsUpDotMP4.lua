@@ -54,6 +54,7 @@ local DEFAULTS = {
     mode    = "both",
     channel = "Master",
     scale   = 1.0,
+    timer   = false,
     x       = nil,
     y       = nil,
 }
@@ -77,6 +78,7 @@ local animFrame     = 0
 local animElapsed   = 0
 local animPlaying   = false
 local activePack    = nil  -- resolved pack for current lust (supports "random")
+local lustExpireTime = nil
 
 ------------------------------------------------------------
 -- Helpers
@@ -119,6 +121,11 @@ indicator:Hide()
 
 local indicatorTex = indicator:CreateTexture(nil, "ARTWORK")
 indicatorTex:SetAllPoints()
+
+local timerText = indicator:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+timerText:SetPoint("TOP", indicator, "BOTTOM", 0, -4)
+timerText:SetTextColor(1, 1, 1, 1)
+timerText:Hide()
 
 ------------------------------------------------------------
 -- Sprite sheet animation (Blizzard Timer.lua pattern)
@@ -178,6 +185,18 @@ local function StartAnimation()
             end
         end
         SetAnimFrame(animFrame, p)
+        -- Update countdown timer
+        if db.timer and lustExpireTime then
+            local rem = lustExpireTime - GetTime()
+            if rem > 0 then
+                timerText:SetText(string.format("%.0f", rem))
+                timerText:Show()
+            else
+                timerText:Hide()
+            end
+        else
+            timerText:Hide()
+        end
     end)
 end
 
@@ -323,6 +342,8 @@ local function DeactivateLust()
     if not lustActive then return end
     lustActive = false
     activePack = nil
+    lustExpireTime = nil
+    timerText:Hide()
     CancelLustTimer()
     indicator:Hide()
     StopAnimation()
@@ -342,6 +363,7 @@ local function CheckLust()
         hadDebuff = true
 
         if remaining > 0 then
+            lustExpireTime = GetTime() + remaining
             ActivateLust()
             CancelLustTimer()
             lustTimer = C_Timer.NewTimer(remaining, function()
@@ -356,6 +378,7 @@ local function CheckLust()
 
     -- New debuff without timing (edge case): assume full duration
     if hasDebuff and not hadDebuff then
+        lustExpireTime = GetTime() + LUST_DURATION
         ActivateLust()
         CancelLustTimer()
         lustTimer = C_Timer.NewTimer(LUST_DURATION, function()
@@ -733,13 +756,53 @@ local scaleSlider = CreatePanelSlider(
 local scaleBottom = channelBottom - 42
 
 ------------------------------------------------------------
--- Unlock Toggle
+-- Timer Toggle
 ------------------------------------------------------------
 CreateDivider(scaleBottom)
 
+local timerBtn = CreateFrame("Button", nil, panel, "BackdropTemplate")
+timerBtn:SetSize(324, 28)
+timerBtn:SetPoint("TOPLEFT", 16, scaleBottom - 10)
+timerBtn:SetBackdrop({
+    bgFile   = "Interface\\Buttons\\WHITE8x8",
+    edgeFile = "Interface\\Buttons\\WHITE8x8",
+    edgeSize = 1,
+})
+timerBtn:SetBackdropBorderColor(0.3, 0.3, 0.35, 1)
+
+local timerBtnLabel = timerBtn:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+timerBtnLabel:SetPoint("CENTER")
+
+local function UpdateTimerToggle()
+    if db.timer then
+        timerBtn:SetBackdropColor(0.3, 0.6, 0.9, 1)
+        timerBtnLabel:SetText("Timer: On")
+        timerBtnLabel:SetTextColor(1, 1, 1, 1)
+    else
+        timerBtn:SetBackdropColor(0.2, 0.2, 0.22, 1)
+        timerBtnLabel:SetText("Timer: Off")
+        timerBtnLabel:SetTextColor(0.6, 0.6, 0.6, 1)
+    end
+end
+
+timerBtn:SetScript("OnClick", function()
+    db.timer = not db.timer
+    UpdateTimerToggle()
+    if not db.timer then
+        timerText:Hide()
+    end
+end)
+
+local timerBottom = scaleBottom - 46
+
+------------------------------------------------------------
+-- Unlock Toggle
+------------------------------------------------------------
+CreateDivider(timerBottom)
+
 local unlockBtn = CreateFrame("Button", nil, panel, "BackdropTemplate")
 unlockBtn:SetSize(324, 28)
-unlockBtn:SetPoint("TOPLEFT", 16, scaleBottom - 10)
+unlockBtn:SetPoint("TOPLEFT", 16, timerBottom - 10)
 unlockBtn:SetBackdrop({
     bgFile   = "Interface\\Buttons\\WHITE8x8",
     edgeFile = "Interface\\Buttons\\WHITE8x8",
@@ -788,7 +851,7 @@ unlockBtn:SetScript("OnClick", function()
 end)
 
 -- Set panel height to fit all controls
-panel:SetHeight(-(scaleBottom - 10) + 28 + 16)
+panel:SetHeight(-(timerBottom - 10) + 28 + 16)
 
 ------------------------------------------------------------
 -- Panel open/close logic
@@ -798,6 +861,7 @@ local function OpenPanel()
     UpdatePackSelection()
     UpdateModeSelection()
     UpdateChannelSelection()
+    UpdateTimerToggle()
     scaleSlider:SetValue(db.scale)
     unlocked = false
     UpdateUnlockState()
